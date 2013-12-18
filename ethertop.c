@@ -327,11 +327,23 @@ dnslookup_loop(void *unused)
 	return 0;
 }
 
+void
+usage(void)
+{
+	fprintf(stderr, "usage: ethertop interface\n");
+	exit(1);
+}
+
 int
 main(int argc, char *argv[])
 {
 	pcap_t *pcap;
-	const char *dev = "en0";
+	const char *dev;
+
+	if (argc != 2)
+		usage();
+	dev = strdup(argv[1]);
+		
 	char errbuf[PCAP_ERRBUF_SIZE];
 	pcap = pcap_open_live(dev, 1500, 0, 1, errbuf);
 	if (!pcap)
