@@ -8,6 +8,7 @@
 #include <curses.h>
 #include <time.h>
 #include <errno.h>
+#include <assert.h>
 
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -23,7 +24,7 @@
 #include <pcap.h>
 
 #define NCOUNTS 60
-#define MAX_ESTAT 256
+#define MAX_ESTAT 1024
 
 
 /*
@@ -65,6 +66,8 @@ lookup_ether(unsigned char addr[], int create)
 			return s;
 	}
 	if (!create)
+		return 0;
+	if (MAX_ESTAT == nstat)
 		return 0;
 	s = calloc(1, sizeof(*s));
 	memcpy(s->addr, addr, ETHER_ADDR_LEN);
@@ -146,7 +149,7 @@ scan_arp()
 	for (next = arpdata; next < lim; next += rtm->rtm_msglen) {
 		rtm = (struct rt_msghdr *)next;
 		sin = (struct sockaddr_inarp *)(rtm + 1);
-		sdl = (struct sockaddr_dl *)((char *)sin + sizeof(*sin));
+		sdl = (struct sockaddr_dl *)((char *)sin + SA_SIZE(sin));
 		s = lookup_ether((unsigned char *) LLADDR(sdl), 0);
 		if (!s)
 			continue;
@@ -206,6 +209,7 @@ display()
 	unsigned int j = 2;
 	unsigned int k;
 	unsigned int i;
+	int MX, MY;
 	struct _estat *s;
 	struct _estat **sortme = calloc(nstat+1, sizeof(*s));
 
@@ -216,6 +220,8 @@ display()
 	pthread_mutex_unlock(&mutex_S);
 	qsort(sortme, nstat, sizeof(*sortme), estat_sort);
 
+	getmaxyx(win, MY, MX);
+	MY--;
 	for (k = 0; k < nstat; k++) {
 		s = *(sortme+k);
 		double pps = avg_pps(s);
@@ -232,7 +238,8 @@ display()
 			unsigned int p = (i+last+1) % NCOUNTS;
 			addch(graph1(s->packets[p]));
 		}
-		j++;
+		if (MY == ++j)
+			break;
 	}
 	clrtobot();
 	refresh();
@@ -327,27 +334,18 @@ dnslookup_loop(void *unused)
 	return 0;
 }
 
-void
-usage(void)
-{
-	fprintf(stderr, "usage: ethertop interface\n");
-	exit(1);
-}
-
 int
 main(int argc, char *argv[])
 {
 	pcap_t *pcap;
-	const char *dev;
+	char errbuf[PCAP_ERRBUF_SIZE];
 
 	if (argc != 2)
-		usage();
-	dev = strdup(argv[1]);
-		
-	char errbuf[PCAP_ERRBUF_SIZE];
-	pcap = pcap_open_live(dev, 1500, 0, 1, errbuf);
+		errx(1, "usage: ethertop interface");
+
+	pcap = pcap_open_live(argv[1], 1500, 0, 1, errbuf);
 	if (!pcap)
-		errx(1, "%s: %s", dev, errbuf);
+		errx(1, "%s: %s", argv[1], errbuf);
 
 	pthread_mutex_init(&mutex_S, NULL);
 	pthread_create(&threadDisplay, NULL, display_loop, NULL);
