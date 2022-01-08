@@ -98,6 +98,18 @@ clear_counts(time_t p)
 	}
 }
 
+int
+is_multicast(u_char *host)
+{
+	if (0 == memcmp(host, "\001\000\136", 3))
+		return 1;
+	if (0 == memcmp(host, "\063\063", 2))
+		return 1;
+	if (0 == memcmp(host, "\377\377\377\377\377\377", 6))
+		return 1;
+	return 0;
+}
+
 void
 packet(unsigned char *user, const struct pcap_pkthdr *h, const unsigned char *pkt)
 {
@@ -105,8 +117,10 @@ packet(unsigned char *user, const struct pcap_pkthdr *h, const unsigned char *pk
 	unsigned int b = h->ts.tv_sec % NCOUNTS;
 	if (h->ts.tv_sec > last)
 		clear_counts((h->ts.tv_sec + 1) % NCOUNTS);
-	account(e->ether_dhost, h->len, b);
-	account(e->ether_shost, h->len, b);
+	if (!is_multicast(e->ether_dhost))
+		account(e->ether_dhost, h->len, b);
+	if (!is_multicast(e->ether_shost))
+		account(e->ether_shost, h->len, b);
 	last = h->ts.tv_sec;
 }
 
@@ -224,6 +238,8 @@ display()
 	MY--;
 	for (k = 0; k < nstat; k++) {
 		s = *(sortme+k);
+		if (0 == s)
+			break;
 		double pps = avg_pps(s);
 		char abuf[20];
 		if (0.0 == pps)
