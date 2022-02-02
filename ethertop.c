@@ -23,7 +23,8 @@
 
 #include <pcap.h>
 
-#define NCOUNTS 60
+#define NCOUNTS 80
+#define NCOUNTS_FOR_AVG 10
 #define MAX_ESTAT 1024
 
 
@@ -115,13 +116,14 @@ packet(unsigned char *user, const struct pcap_pkthdr *h, const unsigned char *pk
 {
 	struct ether_header *e = (struct ether_header *) pkt;
 	unsigned int b = h->ts.tv_sec % NCOUNTS;
-	if (h->ts.tv_sec > last)
-		clear_counts((h->ts.tv_sec + 1) % NCOUNTS);
+	if (h->ts.tv_sec > last) {
+		clear_counts(b);
+		last = h->ts.tv_sec;
+	}
 	if (!is_multicast(e->ether_dhost))
 		account(e->ether_dhost, h->len, b);
 	if (!is_multicast(e->ether_shost))
 		account(e->ether_shost, h->len, b);
-	last = h->ts.tv_sec;
 }
 
 int
@@ -198,23 +200,40 @@ graph2(unsigned int v)
 }
 
 double
-avg_pps(struct _estat *s)
+avg_pps(struct _estat *s, unsigned int l)
 {
 	unsigned int i;
 	double val = 0.0;
-	for (i = 0; i < NCOUNTS; i++)
-		val += s->packets[i];
-	return val / (NCOUNTS - 1);
+	for (i = 0; i < l && i < NCOUNTS; i++) {
+		unsigned int b = (last - i) % NCOUNTS;
+		val += s->packets[b];
+	}
+	return val / NCOUNTS_FOR_AVG;
 }
 
 double
-avg_bps(struct _estat *s)
+avg_bps(struct _estat *s, unsigned int l)
 {
 	unsigned int i;
 	double val = 0.0;
-	for (i = 0; i < NCOUNTS; i++)
-		val += s->octets[i];
-	return val / (NCOUNTS - 1);
+	for (i = 0; i < l && i < NCOUNTS; i++) {
+		unsigned int b = (last - i) % NCOUNTS;
+		val += s->octets[b];
+	}
+	return val * 8.0 / NCOUNTS_FOR_AVG;
+}
+
+const char *
+format_bps(double bps)
+{
+	static char buf[32];
+	if (bps < 1024) 
+		snprintf(buf, sizeof(buf), "%d", (int) bps);
+	else if (bps < 1048576)
+		snprintf(buf, sizeof(buf), "%dK", (int) (bps/1024.0));
+	else
+		snprintf(buf, sizeof(buf), "%dM", (int) (bps/1048576.0));
+	return buf;
 }
 
 void
@@ -240,7 +259,7 @@ display()
 		s = *(sortme+k);
 		if (0 == s)
 			break;
-		double pps = avg_pps(s);
+		double pps = avg_pps(s, NCOUNTS);
 		char abuf[20];
 		if (0.0 == pps)
 			continue;
@@ -248,10 +267,10 @@ display()
 		mvprintw(j, 0, "%02x:%02x:%02x:%02x:%02x:%02x  %15s  %30.30s",
 			s->addr[0], s->addr[1], s->addr[2], s->addr[3], s->addr[4], s->addr[5],
 			abuf, s->name);
-		printw("  %6.1f  %6.1f", pps, 0.008 * avg_bps(s));
+		printw("  %5.0f  %6s", avg_pps(s, NCOUNTS_FOR_AVG), format_bps(avg_bps(s, NCOUNTS_FOR_AVG)));
 		move(j, 87);
-		for (i = 0; i < NCOUNTS; i++) {
-			unsigned int p = (i+last+1) % NCOUNTS;
+		for (i = NCOUNTS; i > 0; i--) {
+			unsigned int p = (last-i+1) % NCOUNTS;
 			addch(graph1(s->packets[p]));
 		}
 		if (MY == ++j)
@@ -266,7 +285,7 @@ void *
 display_loop(void *unused)
 {
 	win = initscr();
-	mvprintw(0, 0, "%17s  %15s  %30.30s  %6s  %6s", "Ether", "IPv4", "Name", "pps", "kb/s");
+	mvprintw(0, 0, "%17s  %15s  %30.30s  %5s  %6s", "Ether", "IPv4", "Name", "pps", "b/s");
 	for (;;) {
 		display();
 		sleep(1);
